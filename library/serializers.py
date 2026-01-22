@@ -30,7 +30,8 @@ class MemberSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Member
-        fields = ['id', 'user', 'user_id', 'membership_date']
+        fields = ['id', 'user', 'user_id', 'loan_count']
+
 
 class LoanSerializer(serializers.ModelSerializer):
     book = BookSerializer(read_only=True)

@@ -1,10 +1,22 @@
 from rest_framework import viewsets, status
 from rest_framework.response import Response
+
+from django.db import models
 from .models import Author, Book, Member, Loan
 from .serializers import AuthorSerializer, BookSerializer, MemberSerializer, LoanSerializer
 from rest_framework.decorators import action
 from django.utils import timezone
 from .tasks import send_loan_notification
+
+class LargeResultsSetPagination(PageNumberPagination):
+    page_size = 1000
+    page_size_query_param = 'page_size'
+    max_page_size = 10000
+
+class StandardResultsSetPagination(PageNumberPagination):
+    page_size = 100
+    page_size_query_param = 'page_size'
+    max_page_size = 1000
 
 class AuthorViewSet(viewsets.ModelViewSet):
     queryset = Author.objects.all()
@@ -13,6 +25,7 @@ class AuthorViewSet(viewsets.ModelViewSet):
 class BookViewSet(viewsets.ModelViewSet):
     queryset = Book.objects.all()
     serializer_class = BookSerializer
+    pagination_class = BookPagination
 
     @action(detail=True, methods=['post'])
     def loan(self, request, pk=None):
@@ -49,6 +62,38 @@ class MemberViewSet(viewsets.ModelViewSet):
     queryset = Member.objects.all()
     serializer_class = MemberSerializer
 
+    @action(detail=True, methods=['GET'])
+    def top_active(self, request):
+        top_members = Member.objects.annotate(
+            loan_count=models.Count('loans', filter=models.Q(loans__is_returned=False))
+        ).order_by('-loan_count')[:5]
+        serializer = self.get_serializer(top_members, many=True)
+        return Response(serializer.data)
+
+
 class LoanViewSet(viewsets.ModelViewSet):
     queryset = Loan.objects.all()
     serializer_class = LoanSerializer
+
+    @action(detail=True, methods=['PUT'])
+    def extend_due_date(self, request, loan_id=None):
+        data = request.data
+        if not data.get("additional_days"):
+            return Response(
+                {"error": "additional_days field is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            loan = Loan.objects.get(id=loan_id, is_returned=False)
+        except Loan.DoesNotExist:
+            return Response(
+                {"error": "Active loan does not exist."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        additional_days = int(data.get("additional_days"))
+        loan.due_date += additional_days
+        loan.save()
+        return Response(
+            {"status": "Due date extended successfully."}, status=status.HTTP_200_OK
+        )
